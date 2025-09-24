@@ -1,477 +1,354 @@
 """
-Analisador (fase frontal) para a linguagem SIMPLE
-- Léxico: tokeniza linhas numeradas, inteiros, variáveis (letra única minúscula), operadores, palavras-chave
-- Sintático: verifica a gramática das instruções (rem, input, let, print, goto, if/goto, end)
-- Semântico: verifica consistência de linhas (ordem crescente), alvo de goto/if existe, nomes válidos (letras minúsculas), tokens válidos
-
-Inclui um pequeno conjunto de testes embutidos: 3 fontes com erros sintáticos e 1 com erro semântico (goto para linha inexistente).
-
-Como usar:
-$ python3 simple_compiler.py
-
-Saída: para cada fonte de teste, mostra fases (lex, parse, semântica) e erros detectados.
-
-Observações: implementado de forma didática — não é um compilador completo, mas cobre os requisitos pedidos.
+Analisador (léxico, sintático e semântico) para a linguagem SIMPLE.
+Coloque o código em `simple.txt` (mesma pasta) e rode:
+    python3 simple_compiler.py
+Retornos:
+    0 = nenhum erro
+    2 = erros encontrados
 """
 
 import re
-from typing import List, Tuple, Optional, Dict
+import sys
+from dataclasses import dataclass
+from typing import List, Optional, Dict
 
-# --------------------- Lexer ---------------------
-TOKEN_SPEC = [
-    ('NUMBER',   r'\d+'),
-    ('NAME',     r'[a-z]'),           # variável: uma letra minúscula
-    ('KEYWORD',  r'rem|input|let|print|goto|if|end'),
-    ('EQ',       r'=='),
-    ('NE',       r'!='),
-    ('GE',       r'>='),
-    ('LE',       r'<='),
-    ('GT',       r'>'),
-    ('LT',       r'<'),
-    ('ASSIGN',   r'='),
-    ('PLUS',     r'\+'),
-    ('MINUS',    r'-'),
-    ('MUL',      r'\*'),
-    ('DIV',      r'/'),
-    ('MOD',      r'%'),
-    ('LPAREN',   r'\('),
-    ('RPAREN',   r'\)'),
-    ('COMMA',    r','),
-    ('WS',       r'[ \t]+'),
-    ('UNKNOWN',  r'.'),
-]
-
-MASTER_RE = re.compile('|'.join(f"(?P<{name}>{pattern})" for name, pattern in TOKEN_SPEC))
-
+# ---------------- Data classes ----------------
+@dataclass
 class Token:
-    def __init__(self, typ, val, col):
-        self.type = typ
-        self.value = val
-        self.col = col
-    def __repr__(self):
-        return f"Token({self.type}, {self.value!r}, col={self.col})"
+    kind: str
+    value: str
+    file_line: int    # 1-based line index in file
+    label: Optional[int]  # numeric label of the line (None for comment/blank)
+    col: int          # 1-based column where token starts
 
+@dataclass
+class AnalysisError:
+    phase: str    # 'lex', 'syntax', 'semantic'
+    message: str
+    file_line: int
+    label: Optional[int]
+    col: int
+    line_text: str
 
-def lex_line(line_text: str) -> Tuple[Optional[int], List[Token], Optional[str]]:
-    """
-    Tokeniza uma linha do arquivo SIMPLE. Retorna (line_number, tokens, error_message).
-    Se a linha começar com número de linha válido, parseia-o.
-    Comentários rem: o resto da linha é tratado como REM e ignorado (mas aceito).
-    """
-    line_text = line_text.rstrip('\n')
-    if not line_text.strip():
-        return None, [], None
-    # extrai número de linha no começo
-    m = re.match(r'\s*(\d+)\s+(.*)', line_text)
-    if not m:
-        return None, [], f"linha não começa com número de linha seguido por espaço: {line_text!r}"
-    lineno = int(m.group(1))
-    rest = m.group(2)
+    def __str__(self) -> str:
+        lbl = f" rótulo={self.label}" if self.label is not None else ""
+        header = f"[{self.phase.upper()}] linha {self.file_line}{lbl} coluna {self.col}: {self.message}"
+        # caret line: show the source line and a caret under the column
+        caret_pos = max(1, min(self.col, len(self.line_text) + 1))
+        caret_line = self.line_text + "\n" + (" " * (caret_pos - 1)) + "^"
+        return header + "\n  " + caret_line
 
+# ---------------- Lexer specification ----------------
+TOKEN_SPECS = [
+    ('RELOP',   r'==|!=|>=|<=|>|<'),
+    ('NUMBER',  r'\d+'),
+    ('KW',      r'rem|input|let|print|goto|if|end'),
+    ('NAME',    r'[a-z]'),
+    ('ASSIGN',  r'='),
+    ('PLUS',    r'\+'),
+    ('MINUS',   r'-'),
+    ('MUL',     r'\*'),
+    ('DIV',     r'/'),
+    ('MOD',     r'%'),
+    ('LPAREN',  r'\('),
+    ('RPAREN',  r'\)'),
+    ('WS',      r'[ \t]+'),
+    ('MISMATCH',r'.'),
+]
+_MASTER_RE = re.compile('|'.join(f"(?P<{n}>{p})" for n, p in TOKEN_SPECS))
+
+def lex_rest(rest: str, file_line: int, label: Optional[int], rest_start_col: int, errors: List[AnalysisError]) -> List[Token]:
+    """Tokeniza a parte após o rótulo. Registra erros léxicos com coluna precisa."""
     tokens: List[Token] = []
     pos = 0
-    # quick check: if starts with rem, rest is comment
-    if rest.startswith('rem'):
-        tokens.append(Token('KEYWORD', 'rem', 0))
-        tokens.append(Token('REM_TEXT', rest[3:].lstrip(), 3))
-        return lineno, tokens, None
-
-    for mo in MASTER_RE.finditer(rest):
-        kind = mo.lastgroup
-        val = mo.group()
-        col = mo.start()
+    L = len(rest)
+    while pos < L:
+        m = _MASTER_RE.match(rest, pos)
+        if not m:
+            # should not occur, but safety
+            errors.append(AnalysisError('lex', 'caractere inválido', file_line, label, rest_start_col + pos, rest))
+            break
+        kind = m.lastgroup
+        val = m.group()
+        start = m.start()
+        col = rest_start_col + start  # 1-based column in full line
         if kind == 'WS':
+            pos = m.end()
             continue
-        if kind == 'UNKNOWN':
-            return lineno, tokens, f"token desconhecido {val!r} na coluna {col}"
-        # KEYWORD must be full word -- regex already enforces lowercase
-        tokens.append(Token(kind, val, col))
-    return lineno, tokens, None
+        if kind == 'MISMATCH':
+            ch = val
+            if ch.isalpha() and ch.upper() == ch:
+                # uppercase letter outside comment
+                errors.append(AnalysisError('lex', f"letra maiúscula não permitida fora de comentário: '{ch}'", file_line, label, col, rest))
+            else:
+                errors.append(AnalysisError('lex', f"token inválido: '{ch}'", file_line, label, col, rest))
+            pos = m.end()
+            continue
+        # normal token
+        tokens.append(Token(kind, val, file_line, label, col))
+        pos = m.end()
+    return tokens
 
-# --------------------- Parser ---------------------
-
-class ASTNode:
-    pass
-
-class Program:
-    def __init__(self):
-        self.lines: List[Tuple[int, 'Stmt']] = []  # (lineno, stmt)
-
-class Stmt(ASTNode):
-    pass
-
-class Rem(Stmt):
-    def __init__(self, text: str):
-        self.text = text
-
-class Input(Stmt):
-    def __init__(self, var: str):
-        self.var = var
-
-class Let(Stmt):
-    def __init__(self, var: str, expr: 'Expr'):
-        self.var = var
-        self.expr = expr
-
-class Print(Stmt):
-    def __init__(self, var: str):
-        self.var = var
-
-class Goto(Stmt):
-    def __init__(self, target: int):
-        self.target = target
-
-class IfGoto(Stmt):
-    def __init__(self, left: 'Expr', op: str, right: 'Expr', target: int):
-        self.left = left
-        self.op = op
-        self.right = right
-        self.target = target
-
-class End(Stmt):
-    pass
-
-# Expressions
-class Expr(ASTNode):
-    pass
-
-class Num(Expr):
-    def __init__(self, val: int):
-        self.val = val
-
-class Var(Expr):
-    def __init__(self, name: str):
-        self.name = name
-
-class BinOp(Expr):
-    def __init__(self, left: Expr, op: str, right: Expr):
-        self.left = left
-        self.op = op
-        self.right = right
-
-# Parser helpers
+# ---------------- Parser helpers ----------------
 class ParserError(Exception):
-    pass
+    def __init__(self, message: str, file_line: int, label: Optional[int], col: int):
+        super().__init__(message)
+        self.message = message
+        self.file_line = file_line
+        self.label = label
+        self.col = col
 
-
-def parse_program(lines: List[str]) -> Tuple[Optional[Program], List[str]]:
-    program = Program()
-    errors: List[str] = []
-    prev_lineno = -1
-    for idx, text in enumerate(lines):
-        lineno, tokens, lex_err = lex_line(text)
-        if lex_err:
-            errors.append(f"Lex error na linha {idx+1}: {lex_err}")
-            continue
-        if lineno is None:
-            continue
-        if lineno <= prev_lineno:
-            errors.append(f"Número de linha não está em ordem crescente: {lineno} depois de {prev_lineno}")
-            # continue parsing to collect more errors
-        prev_lineno = lineno
-        try:
-            stmt = parse_stmt(tokens)
-            program.lines.append((lineno, stmt))
-        except ParserError as e:
-            errors.append(f"Sintaxe: linha {lineno}: {e}")
-    return (program if not errors else program), errors
-
-
-def expect_token(tokens: List[Token], pos: int, *kinds) -> Tuple[Token, int]:
-    if pos >= len(tokens):
-        raise ParserError(f"esperava {' ou '.join(kinds)}, encontrou fim da linha")
-    tok = tokens[pos]
-    if tok.type in kinds or tok.value in kinds:
-        return tok, pos+1
-    raise ParserError(f"esperava {' ou '.join(kinds)}, encontrou {tok.type}({tok.value}) na coluna {tok.col}")
-
-# Expression parser: recursive descent with precedence
-
-OP_PRECEDENCE = {
-    '%': 3, '*': 3, '/': 3,
-    '+': 2, '-': 2,
+# precedence for binary ops
+BIN_OPS_PRECEDENCE = {
+    'PLUS': 10,
+    'MINUS': 10,
+    'MUL': 20,
+    'DIV': 20,
+    'MOD': 20,
 }
 
+def parse_expression(tokens: List[Token], pos: int, file_line: int, label: Optional[int], stop_kinds: Optional[set] = None) -> int:
+    """Parser de expressão para SIMPLE: no máximo 1 operação binária."""
+    if stop_kinds is None:
+        stop_kinds = set()
 
-def parse_stmt(tokens: List[Token]) -> Stmt:
+    def parse_operand(p: int) -> int:
+        if p >= len(tokens):
+            last_col = tokens[-1].col if tokens else 1
+            raise ParserError('expressão incompleta: operando esperado', file_line, label, last_col)
+        t = tokens[p]
+        if t.kind == 'MINUS':
+            # unário: -x ou -123
+            if p + 1 >= len(tokens):
+                raise ParserError("operando esperado após '-'", file_line, label, t.col)
+            if tokens[p+1].kind not in ('NUMBER', 'NAME'):
+                raise ParserError("após '-' só pode vir número ou variável", file_line, label, tokens[p+1].col)
+            return p + 2
+        if t.kind in ('NUMBER', 'NAME'):
+            return p + 1
+        raise ParserError(f"operando inválido '{t.value}'", file_line, label, t.col)
+
+    # primeiro operando
+    p = parse_operand(pos)
+
+    # se não tem operador binário, terminou
+    if p >= len(tokens) or tokens[p].kind in stop_kinds:
+        return p
+
+    # se tem operador binário, consome
+    if tokens[p].kind not in ('PLUS', 'MINUS', 'MUL', 'DIV', 'MOD'):
+        return p  # fim da expressão, outro token (como RELOP ou KW)
+    op_tok = tokens[p]
+    p += 1
+
+    # segundo operando obrigatório
+    p = parse_operand(p)
+
+    # agora NÃO pode haver mais nada, exceto stop_kinds
+    if p < len(tokens) and tokens[p].kind not in stop_kinds:
+        raise ParserError(f"apenas uma operação é permitida por expressão; encontrado '{tokens[p].value}'", file_line, label, tokens[p].col)
+
+    return p
+
+def parse_statement(tokens: List[Token], file_line: int, label: Optional[int], line_text: str) -> List[AnalysisError]:
+    errs: List[AnalysisError] = []
     if not tokens:
-        raise ParserError("linha vazia depois do número")
-    # first token should be keyword
+        errs.append(AnalysisError('syntax', 'instrução ausente após rótulo', file_line, label, 1, line_text))
+        return errs
     first = tokens[0]
-    if first.type != 'KEYWORD':
-        raise ParserError(f"esperava uma instrução (rem/input/let/print/goto/if/end), encontrou {first.value}")
+    if first.kind != 'KW':
+        errs.append(AnalysisError('syntax', f"esperada instrução (rem/input/let/print/goto/if/end), encontrada '{first.value}'", file_line, label, first.col, line_text))
+        return errs
     kw = first.value
-    if kw == 'rem':
-        # rem parsing: second token is REM_TEXT
-        if len(tokens) >= 2 and tokens[1].type == 'REM_TEXT':
-            return Rem(tokens[1].value)
+    try:
+        if kw == 'input':
+            if len(tokens) < 2:
+                raise ParserError("'input' requer uma variável", file_line, label, first.col + len(first.value))
+            t = tokens[1]
+            if t.kind != 'NAME':
+                raise ParserError("'input' requer uma variável (uma letra minúscula)", file_line, label, t.col)
+            if len(tokens) != 2:
+                extra = tokens[2]
+                raise ParserError(f"token extra após 'input': '{extra.value}'", file_line, label, extra.col)
+
+        elif kw == 'print':
+            if len(tokens) < 2:
+                raise ParserError("'print' requer uma variável", file_line, label, first.col + len(first.value))
+            t = tokens[1]
+            if t.kind != 'NAME':
+                raise ParserError("'print' só aceita variável (uma letra minúscula)", file_line, label, t.col)
+            if len(tokens) != 2:
+                extra = tokens[2]
+                raise ParserError(f"token extra após 'print': '{extra.value}'", file_line, label, extra.col)
+
+        elif kw == 'goto':
+            if len(tokens) < 2:
+                raise ParserError("'goto' requer número de linha", file_line, label, first.col + len(first.value))
+            t = tokens[1]
+            if t.kind != 'NUMBER':
+                raise ParserError("'goto' requer número de linha (literal)", file_line, label, t.col)
+            if len(tokens) != 2:
+                extra = tokens[2]
+                raise ParserError(f"token extra após 'goto': '{extra.value}'", file_line, label, extra.col)
+
+        elif kw == 'end':
+            if len(tokens) != 1:
+                extra = tokens[1]
+                raise ParserError("'end' não aceita argumentos", file_line, label, extra.col)
+
+        elif kw == 'let':
+            if len(tokens) < 4:
+                raise ParserError("uso: let <var> = <expressão>", file_line, label, first.col)
+            name_tok = tokens[1]
+            if name_tok.kind != 'NAME':
+                raise ParserError("nome de variável inválido na atribuição (esperada uma letra minúscula)", file_line, label, name_tok.col)
+            assign_tok = tokens[2]
+            if assign_tok.kind != 'ASSIGN':
+                raise ParserError("esperado '=' após variável em 'let'", file_line, label, assign_tok.col)
+            endpos = parse_expression(tokens, 3, file_line, label, stop_kinds=set())
+            if endpos != len(tokens):
+                extra = tokens[endpos]
+                raise ParserError(f"token extra após expressão em 'let': '{extra.value}'", file_line, label, extra.col)
+
+        elif kw == 'if':
+            pos_after_left = parse_expression(tokens, 1, file_line, label, stop_kinds={'RELOP'})
+            if pos_after_left >= len(tokens) or tokens[pos_after_left].kind != 'RELOP':
+                col = tokens[pos_after_left].col if pos_after_left < len(tokens) else (tokens[-1].col if tokens else 1)
+                raise ParserError("operador relacional esperado (==, !=, >, >=, <, <=)", file_line, label, col)
+            pos = pos_after_left + 1
+            pos_after_right = parse_expression(tokens, pos, file_line, label, stop_kinds={'KW'})
+            if pos_after_right >= len(tokens) or not (tokens[pos_after_right].kind == 'KW' and tokens[pos_after_right].value == 'goto'):
+                col = tokens[pos_after_right].col if pos_after_right < len(tokens) else (tokens[-1].col if tokens else 1)
+                raise ParserError("depois da condição do if só pode vir 'goto'", file_line, label, col)
+            if pos_after_right + 1 >= len(tokens):
+                raise ParserError("'goto' deve ser seguido por número de linha", file_line, label, tokens[pos_after_right].col)
+            num_tok = tokens[pos_after_right + 1]
+            if num_tok.kind != 'NUMBER':
+                raise ParserError("'goto' deve ser seguido por número de linha literal", file_line, label, num_tok.col)
+            if pos_after_right + 2 != len(tokens):
+                extra = tokens[pos_after_right + 2]
+                raise ParserError(f"token extra após if/goto: '{extra.value}'", file_line, label, extra.col)
+
         else:
-            return Rem('')
-    if kw == 'input':
-        # input x
-        if len(tokens) != 2 or tokens[1].type != 'NAME':
-            raise ParserError("uso: input <var> (var é uma letra minúscula)")
-        return Input(tokens[1].value)
-    if kw == 'print':
-        if len(tokens) != 2 or tokens[1].type != 'NAME':
-            raise ParserError("uso: print <var> (var é uma letra minúscula)")
-        return Print(tokens[1].value)
-    if kw == 'goto':
-        # goto <number>
-        if len(tokens) != 2 or tokens[1].type != 'NUMBER':
-            raise ParserError("uso: goto <número de linha>")
-        return Goto(int(tokens[1].value))
-    if kw == 'end':
-        if len(tokens) != 1:
-            raise ParserError("end não recebe argumentos")
-        return End()
-    if kw == 'let':
-        # let x = expr
-        # tokens: KEYWORD NAME ASSIGN ...
-        if len(tokens) < 4:
-            raise ParserError("uso: let <var> = <expressão>")
-        if tokens[1].type != 'NAME' or tokens[2].type != 'ASSIGN':
-            raise ParserError("uso: let <var> = <expressão> (nome de variável e '=')")
-        var = tokens[1].value
-        expr_tokens = tokens[3:]
-        expr, rem = parse_expr(expr_tokens, 0)
-        if rem != len(expr_tokens):
-            extra = expr_tokens[rem]
-            raise ParserError(f"token extra após expressão: {extra.value} na coluna {extra.col}")
-        return Let(var, expr)
-    if kw == 'if':
-        # if <expr> <relop> <expr> goto <number>
-        # find 'goto' token
-        # tokens like: KEYWORD ... maybe 'if' then expression tokens including NAME/NUMBER/BINOPS, then relational op token(s), then expression, then KEYWORD goto, then NUMBER
-        # Simpler: parse left expr until relational operator token types (EQ, NE, GT, LT, GE, LE)
-        pos = 1
-        left_expr, pos = parse_expr(tokens, pos)
-        if pos >= len(tokens):
-            raise ParserError("instrução if incompleta: esperava operador relacional")
-        reltok = tokens[pos]
-        if reltok.type not in ('EQ','NE','GT','LT','GE','LE'):
-            raise ParserError(f"operador relacional esperado, encontrado {reltok.value}")
-        op = reltok.value
-        pos += 1
-        right_expr, pos = parse_expr(tokens, pos)
-        # next should be KEYWORD goto
-        if pos >= len(tokens) or not (tokens[pos].type == 'KEYWORD' and tokens[pos].value == 'goto'):
-            raise ParserError("instrução if deve terminar com 'goto <linha>'")
-        pos += 1
-        if pos >= len(tokens) or tokens[pos].type != 'NUMBER':
-            raise ParserError("instrução if: esperava número de linha após goto")
-        target = int(tokens[pos].value)
-        pos += 1
-        if pos != len(tokens):
-            extra = tokens[pos]
-            raise ParserError(f"texto extra após if: {extra.value} na coluna {extra.col}")
-        return IfGoto(left_expr, op, right_expr, target)
-    raise ParserError(f"instrução desconhecida: {kw}")
+            raise ParserError(f"instrução desconhecida '{kw}'", file_line, label, first.col)
 
-# parse_expr: supports numbers, names, parentheses, binary ops with precedence
+    except ParserError as pe:
+        errs.append(AnalysisError('syntax', pe.message, pe.file_line, pe.label, pe.col, line_text))
+    return errs
 
-def parse_expr(tokens: List[Token], pos: int) -> Tuple[Expr, int]:
-    # implement Pratt parser / precedence climbing
-    def parse_primary(pos):
-        if pos >= len(tokens):
-            raise ParserError("expressão incompleta")
-        t = tokens[pos]
-        if t.type == 'NUMBER':
-            return Num(int(t.value)), pos+1
-        if t.type == 'NAME':
-            return Var(t.value), pos+1
-        if t.type == 'LPAREN':
-            expr, npos = parse_expr(tokens, pos+1)
-            if npos >= len(tokens) or tokens[npos].type != 'RPAREN':
-                raise ParserError("parêntese direito esperado")
-            return expr, npos+1
-        raise ParserError(f"primária inválida: {t.value} na coluna {t.col}")
-
-    def get_precedence(tok: Token) -> int:
-        if tok.type in ('PLUS','MINUS'):
-            return OP_PRECEDENCE['+']
-        if tok.type in ('MUL','DIV','MOD'):
-            return OP_PRECEDENCE['*']
-        # unknown operator
-        return -1
-
-    left, pos = parse_primary(pos)
-    while pos < len(tokens):
-        t = tokens[pos]
-        if t.type in ('PLUS','MINUS','MUL','DIV','MOD'):
-            op = t.value
-            prec = get_precedence(t)
-            pos += 1
-            right, pos = parse_expr_rhs(right_left=left, min_prec=prec, tokens=tokens, pos=pos)
-            left = right
+# ---------------- Semantic checks ----------------
+def semantic_analysis(non_comment_lines: List[Dict], tokens_by_line: Dict[int, List[Token]]) -> List[AnalysisError]:
+    errs: List[AnalysisError] = []
+    if not non_comment_lines:
+        return errs
+    labels = [info['label'] for info in non_comment_lines]
+    # strictly increasing
+    for i in range(1, len(labels)):
+        if labels[i] <= labels[i-1]:
+            info = non_comment_lines[i]
+            errs.append(AnalysisError('semantic', f"rótulos não estão estritamente crescentes: {labels[i-1]} seguido de {labels[i]}", info['file_line'], info['label'], 1, info['line_text']))
+    # duplicates
+    seen = {}
+    for info in non_comment_lines:
+        lbl = info['label']
+        if lbl in seen:
+            errs.append(AnalysisError('semantic', f"rótulo duplicado {lbl} (aparece na linha {seen[lbl]} e {info['file_line']})", info['file_line'], lbl, 1, info['line_text']))
         else:
-            break
-    return left, pos
+            seen[lbl] = info['file_line']
+    label_set = set(labels)
+    # check goto targets
+    for info in non_comment_lines:
+        fl = info['file_line']
+        toks = tokens_by_line.get(fl, [])
+        i = 0
+        while i < len(toks):
+            t = toks[i]
+            if t.kind == 'KW' and t.value == 'goto':
+                if i + 1 < len(toks) and toks[i+1].kind == 'NUMBER':
+                    target = int(toks[i+1].value)
+                    if target not in label_set:
+                        errs.append(AnalysisError('semantic', f"goto para rótulo inexistente {target}", fl, info['label'], t.col, info['line_text']))
+                    i += 2
+                    continue
+                else:
+                    errs.append(AnalysisError('semantic', "'goto' não seguido por número de linha", fl, info['label'], t.col, info['line_text']))
+            i += 1
+    # end rules: at most one end and if present must be last non-comment line
+    ends = [info for info in non_comment_lines if re.search(r'\\bend\\b', info['line_text'])]
+    if len(ends) > 1:
+        for e in ends:
+            errs.append(AnalysisError('semantic', "múltiplas instruções 'end' encontradas", e['file_line'], e['label'], 1, e['line_text']))
+    if len(ends) == 1:
+        last = non_comment_lines[-1]
+        if ends[0]['file_line'] != last['file_line']:
+            errs.append(AnalysisError('semantic', "'end' deve ser a última instrução executável (não comentário)", ends[0]['file_line'], ends[0]['label'], 1, ends[0]['line_text']))
 
+    return errs
 
-def parse_expr_rhs(right_left: Expr, min_prec: int, tokens: List[Token], pos: int) -> Tuple[Expr, int]:
-    # right_left is left-hand expression; pos is at start of right primary
-    # parse primary on right
-    def parse_primary_at(pos):
-        if pos >= len(tokens):
-            raise ParserError("expressão incompleta (rhs)")
-        t = tokens[pos]
-        if t.type == 'NUMBER':
-            return Num(int(t.value)), pos+1
-        if t.type == 'NAME':
-            return Var(t.value), pos+1
-        if t.type == 'LPAREN':
-            expr, npos = parse_expr(tokens, pos+1)
-            if npos >= len(tokens) or tokens[npos].type != 'RPAREN':
-                raise ParserError("parêntese direito esperado (rhs)")
-            return expr, npos+1
-        raise ParserError(f"primária inválida (rhs): {t.value} na coluna {t.col}")
+# ---------------- Pipeline ----------------
+def analyze_file(path: str) -> List[AnalysisError]:
+    errors: List[AnalysisError] = []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            raw_lines = f.readlines()
+    except FileNotFoundError:
+        print(f"Erro: arquivo '{path}' não encontrado.")
+        sys.exit(1)
 
-    left = right_left
-    # we already consumed operator before calling this; parse the right primary
-    right, pos = parse_primary_at(pos)
-    node = BinOp(left, tokens[pos-1].value if pos-1 < len(tokens) else '?', right)
+    non_comment_lines: List[Dict] = []  # executable lines only
+    tokens_by_line: Dict[int, List[Token]] = {}
 
-    # now check for further operators with higher precedence
-    while pos < len(tokens):
-        t = tokens[pos]
-        if t.type not in ('PLUS','MINUS','MUL','DIV','MOD'):
-            break
-        prec = OP_PRECEDENCE.get(t.value, -1)
-        if prec > min_prec:
-            # consume op
-            op = t.value
-            pos += 1
-            rhs, pos = parse_expr_rhs(node, prec, tokens, pos)
-            node = rhs
-        else:
-            break
-    return node, pos
+    # scan and separate comments (completely ignored)
+    for idx, raw in enumerate(raw_lines, start=1):
+        line = raw.rstrip('\n')
+        if line.strip() == '':
+            continue
+        m = re.match(r'^\s*(\d+)\s+(.*)$', line)
+        if not m:
+            errors.append(AnalysisError('syntax', "linha deve começar com número de rótulo seguido por instrução", idx, None, 1, line))
+            continue
+        label = int(m.group(1))
+        rest = m.group(2)
+        rest_start_col = m.start(2) + 1
+        # comment line (exact 'rem' token in lowercase)
+        if re.match(r'^rem(\b|$)', rest):
+            continue
+        non_comment_lines.append({'file_line': idx, 'label': label, 'line_text': line, 'rest': rest, 'rest_start_col': rest_start_col})
 
-# --------------------- Semantic Analyzer ---------------------
+    # lexical
+    for info in non_comment_lines:
+        fl = info['file_line']
+        lbl = info['label']
+        rest = info['rest']
+        base_col = info['rest_start_col']
+        toks = lex_rest(rest, fl, lbl, base_col, errors)
+        tokens_by_line[fl] = toks
 
-class SemanticError(Exception):
-    pass
+    # syntax
+    for info in non_comment_lines:
+        fl = info['file_line']
+        lbl = info['label']
+        toks = tokens_by_line.get(fl, [])
+        syn_errs = parse_statement(toks, fl, lbl, info['line_text'])
+        errors.extend(syn_errs)
 
+    # semantic (run even if earlier errors exist, to show more)
+    sem_errs = semantic_analysis(non_comment_lines, tokens_by_line)
+    errors.extend(sem_errs)
 
-def semantic_check(program: Program) -> List[str]:
-    errors: List[str] = []
-    # check that line numbers are strictly increasing and unique
-    linenos = [ln for ln, _ in program.lines]
-    if len(linenos) != len(set(linenos)):
-        errors.append("números de linha duplicados detectados")
-    if any(earlier >= later for earlier, later in zip(linenos, linenos[1:])):
-        errors.append("números de linha não estão estritamente crescentes")
-
-    # collect targets from gotos and ensure they exist
-    labels = set(linenos)
-    for ln, stmt in program.lines:
-        if isinstance(stmt, Goto):
-            if stmt.target not in labels:
-                errors.append(f"linha {ln}: goto para linha inexistente {stmt.target}")
-        if isinstance(stmt, IfGoto):
-            if stmt.target not in labels:
-                errors.append(f"linha {ln}: if/goto para linha inexistente {stmt.target}")
-    # check variable names are single lowercase letter and keywords are correct -- lexer already enforces most
-    # check print/input/let variable names length
-    for ln, stmt in program.lines:
-        if isinstance(stmt, Input) or isinstance(stmt, Print):
-            if not re.fullmatch(r'[a-z]', stmt.var):
-                errors.append(f"linha {ln}: nome de variável inválido: {stmt.var}")
-        if isinstance(stmt, Let):
-            if not re.fullmatch(r'[a-z]', stmt.var):
-                errors.append(f"linha {ln}: nome de variável inválido na atribuição: {stmt.var}")
-            # further semantic checks on expression variables
-            check_expr_vars(stmt.expr, ln, errors)
-        if isinstance(stmt, IfGoto):
-            check_expr_vars(stmt.left, ln, errors)
-            check_expr_vars(stmt.right, ln, errors)
     return errors
 
-
-def check_expr_vars(expr: Expr, ln: int, errors: List[str]):
-    if isinstance(expr, Var):
-        if not re.fullmatch(r'[a-z]', expr.name):
-            errors.append(f"linha {ln}: variável inválida na expressão: {expr.name}")
-    elif isinstance(expr, Num):
-        pass
-    elif isinstance(expr, BinOp):
-        check_expr_vars(expr.left, ln, errors)
-        check_expr_vars(expr.right, ln, errors)
-    else:
-        errors.append(f"linha {ln}: expressão desconhecida")
-
-# --------------------- Test sources ---------------------
-
-TEST_SOURCES = {
-    'ok_program': '''10 rem determina e imprime a soma de dois inteiros
-15 rem
-20 rem
-30 input a
-40 input b
-45 rem
-50 rem
-60 let c = a + b
-65 rem
-70 rem
-80 print c
-90 rem
-99 end
-''',
-
-    # Sintático 1: token inválido (letra maiúscula K) -> lex error
-    'sintatic_1_bad_token': '''10 rem teste
-20 input A
-30 end
-''',
-
-    # Sintático 2: malformed if (missing goto)
-    'sintatic_2_bad_if': '''10 input a
-20 input b
-30 if a == b 80
-40 print a
-99 end
-''',
-
-    # Sintático 3: let with bad expression (unexpected token)
-    'sintatic_3_bad_let': '''10 let x = 5 + * 3
-20 print x
-99 end
-''',
-
-    # Semântico: goto to non-existent line 999
-    'semantico_bad_goto': '''10 input a
-20 goto 999
-30 print a
-99 end
-''',
-}
-
-# --------------------- Runner / tests ---------------------
-
-def run_on_source(src: str) -> None:
-    print('--- Fonte ---')
-    print(src)
-    lines = src.splitlines()
-    program, parse_errors = parse_program(lines)
-    if parse_errors:
-        print('\nErros na fase léxica/sintática:')
-        for e in parse_errors:
-            print('  -', e)
-    else:
-        print('\nAnálise léxica/sintática: OK')
-    sem_errors = semantic_check(program)
-    if sem_errors:
-        print('\nErros semânticos:')
-        for e in sem_errors:
-            print('  -', e)
-    else:
-        print('\nChecagem semântica: OK')
-
+# ---------------- CLI ----------------
 if __name__ == '__main__':
-    for name, src in TEST_SOURCES.items():
-        print('\n========================')
-        print('Teste:', name)
-        run_on_source(src)
-
-    print('\nConcluído.')
+    path = 'simple.txt'
+    errs = analyze_file(path)
+    if errs:
+        errs_sorted = sorted(errs, key=lambda e: (e.file_line, e.col))
+        print('\nErros detectados:')
+        for e in errs_sorted:
+            print('\n- ', e)
+        print(f"\nTotal de erros: {len(errs_sorted)}")
+        sys.exit(2)
+    else:
+        print('\nNenhum erro encontrado. Análise léxica, sintática e semântica: OK.')
+        sys.exit(0)
