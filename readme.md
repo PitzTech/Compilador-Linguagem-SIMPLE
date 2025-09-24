@@ -113,7 +113,7 @@ Total de erros: 1
 ## 👨‍🎓 Autor
 
 **Victor Laurentino do Nascimento**
-RA: 2312130047
+- 2312130047
 
 ---
 
