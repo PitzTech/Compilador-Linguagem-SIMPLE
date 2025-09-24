@@ -1,82 +1,125 @@
-# Github
-https://github.com/PitzTech/Compilador-Linguagem-SIMPLE
+# 🖥️ Compilador da Linguagem SIMPLE
 
-# Aluno
-Victor Laurentino do Nascimento - 2312130047
+Este projeto implementa, em **Python 3**, as fases de **análise léxica, sintática e semântica** da linguagem de programação **SIMPLE**.
 
-# SIMPLE Compiler (Analisador Léxico, Sintático e Semântico)
+A linguagem SIMPLE é inspirada nas primeiras versões do BASIC, utilizando instruções simples como `rem`, `input`, `let`, `print`, `goto`, `if/goto` e `end`.
 
-Este projeto implementa em **Python 3** as fases de **análise léxica, sintática e semântica** da linguagem de programação **SIMPLE**.
-
-A linguagem SIMPLE é semelhante às primeiras versões do BASIC e utiliza comandos como `rem`, `input`, `let`, `print`, `goto`, `if/goto` e `end`.
-
-O compilador desenvolvido aqui **não gera código** nem executa os programas. Ele é responsável apenas por analisar o código-fonte e identificar **erros de sintaxe** e **erros semânticos**.
+> ⚠️ **Importante:** o compilador **não executa** os programas e **não gera código**.
+> Sua função é apenas **analisar** o código-fonte e reportar erros **léxicos**, **sintáticos** e **semânticos**.
 
 ---
 
-## Como rodar
+## 📂 Estrutura do Projeto
 
-```bash
-python3 simple_compiler.py
+```
+.
+├── simple_compiler.py   # Código do analisador
+├── simple.txt           # Programa SIMPLE a ser analisado
+└── README.md            # Este arquivo
 ```
 
-Ao executar, o script automaticamente testa alguns exemplos pré-definidos (um programa correto, três com erros sintáticos e um com erro semântico).
+---
+
+## 🚀 Como usar
+
+1. **Crie/edite** o arquivo `simple.txt` na raiz do projeto e escreva o código SIMPLE que deseja analisar.
+
+   Exemplo de programa válido:
+
+   ```basic
+   10 input n
+   20 let y = 0
+   30 if n <= 0 goto 60
+   40 let y = n * 2
+   50 print y
+   60 end
+   ```
+
+2. **Execute** o compilador:
+
+   ```bash
+   python3 simple_compiler.py
+   ```
+
+3. **Saída esperada**:
+
+   * ✅ **Sem erros**:
+
+     ```
+     Nenhum erro encontrado. Análise léxica, sintática e semântica: OK.
+     ```
+
+   * ❌ **Com erros**:
+     Lista cada erro com:
+
+     * Tipo (`LEX`, `SYNTAX`, `SEMANTIC`)
+     * Linha no arquivo e rótulo (label)
+     * Coluna exata
+     * Mensagem explicativa
+       *(com uma seta `^` indicando onde o problema ocorreu)*
 
 ---
 
-## Como adicionar seus próprios programas SIMPLE
+## 📚 Instruções da Linguagem SIMPLE
 
-1. Abra o arquivo **`simple_compiler.py`** no editor de texto de sua preferência.
+| Instrução                | Sintaxe                                 | Exemplo Válido                        | Exemplo Inválido                                                 |
+| ------------------------ | --------------------------------------- | ------------------------------------- | ---------------------------------------------------------------- |
+| **Comentário**           | `rem ...`                               | `10 rem este é um comentário`         | `10 REM maiúsculas não são permitidas`                           |
+| **Entrada**              | `input <var>`                           | `10 input x`                          | `10 input 123`                                                   |
+| **Saída**                | `print <var>`                           | `20 print x`                          | `20 print x + 1`                                                 |
+| **Atribuição**           | `let <var> = <expr>`                    | `30 let x = y + 1`<br>`40 let x = -y` | `30 let x = y + z * 2` ❌ (mais de uma operação)                  |
+| **Desvio incondicional** | `goto <linha>`                          | `50 goto 30`                          | `50 goto x`                                                      |
+| **Desvio condicional**   | `if <expr> <relop> <expr> goto <linha>` | `60 if x >= 10 goto 100`              | `60 if x + y > z * 2 goto 100` ❌ (mais de uma operação por lado) |
+| **Fim do programa**      | `end`                                   | `99 end`                              | `99 end 123`                                                     |
 
-2. Vá até o dicionário `TEST_SOURCES` (no final do arquivo). Ele possui vários exemplos já prontos, como `ok_program`, `sintatic_1_bad_token`, etc.
+> **Expressões (`<expr>`):**
+>
+> * Só podem conter **um operando** ou **uma única operação binária**.
+> * Exemplos válidos: `x`, `10`, `-x`, `x + 1`, `a * b`
+> * Exemplos inválidos: `x + y * z`, `(x + y)` (parênteses não são suportados)
 
-3. Adicione uma nova entrada ao dicionário com o nome que preferir e o código-fonte SIMPLE que deseja testar. Exemplo:
+---
 
-```python
-TEST_SOURCES = {
-    'ok_program': '''10 input a\n20 input b\n30 let c = a + b\n40 print c\n99 end\n''',
+## 🔎 Regras de Semântica
 
-    'meu_teste': '''10 input x\n20 let y = x * 2\n30 print y\n99 end\n''',
-}
+* Os **rótulos (labels)** devem ser **únicos** e **estritamente crescentes**.
+* `goto` e `if ... goto` só podem apontar para **rótulos existentes**.
+* Deve haver **no máximo um `end`**, que deve ser a **última linha executável**.
+
+---
+
+## 🧪 Exemplo de Erro Sintático
+
+Entrada (`simple.txt`):
+
+```basic
+10 let y = y + k * 1
+20 end
 ```
 
-> **Atenção:** use `\n` no final de cada linha do código SIMPLE dentro da string.
+Saída:
 
-4. Salve o arquivo.
+```
+Erros detectados:
 
-5. Rode novamente o script:
-
-```bash
-python3 simple_compiler.py
+-  [SYNTAX] linha 1 rótulo=10 coluna 15: apenas uma operação é permitida por expressão; encontrado '*'
+  10 let y = y + k * 1
+                ^
+Total de erros: 1
 ```
 
-6. O compilador vai exibir os resultados da análise do seu código.
+---
+
+## 👨‍🎓 Autor
+
+**Victor Laurentino do Nascimento**
+RA: 2312130047
 
 ---
 
-## Estrutura de análise
+## 📌 Próximos Passos
 
-- **Léxica:** divide o código em tokens (palavras-chave, variáveis, números, operadores, etc.).
-- **Sintática:** valida se as instruções seguem a gramática da linguagem SIMPLE.
-- **Semântica:** verifica consistência (ordem de linhas, destino de `goto` existente, variáveis válidas, etc.).
+* [ ] Implementar **interpretador** para executar os programas SIMPLE.
+* [ ] Adicionar suporte a **geração de código intermediário**.
+* [ ] Criar **testes automatizados** (unittest/pytest) para facilitar manutenção.
 
----
-
-## Exemplo de saída
-
-Se o código estiver correto:
-```
-Análise léxica/sintática: OK
-Checagem semântica: OK
-```
-
-Se houver erro sintático ou semântico, o erro será listado com o número da linha e a causa.
-
----
-
-## Próximos passos
-
-- Implementar um **interpretador** para executar os programas SIMPLE analisados.
-- Adicionar suporte a **geração de código intermediário**.
-
----
