@@ -1,7 +1,7 @@
 """
 Analisador (léxico, sintático e semântico) para a linguagem SIMPLE.
 Coloque o código em `simple.txt` (mesma pasta) e rode:
-    python3 simple_compiler.py
+    python3 compilador_analise.py
 Retornos:
     0 = nenhum erro
     2 = erros encontrados
