@@ -318,13 +318,6 @@ O compilador **garante** que o código gerado use no máximo 100 palavras, geran
 
 ---
 
-## 📚 Referências
-
-- [Deitel & Deitel - C++ How to Program](https://deitel.com)
-- [Exercícios 10.04-10.08](SML.md) - Exemplos de programas SML
-
----
-
 ## 📜 Licença
 
 Este projeto foi desenvolvido para fins educacionais como parte do curso de Compiladores.
