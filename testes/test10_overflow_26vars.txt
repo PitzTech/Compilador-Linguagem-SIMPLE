@@ -1,0 +1,28 @@
+1  let a = 0
+2  let b = a + 2
+3  let c = b + 2
+4  let d = c + 2
+5  let e = d + 2
+6  let f = e + 2
+7  let g = f + 2
+8  let h = g + 2
+9  let i = h + 2
+10 let j = i + 2
+11 let k = j + 2
+12 let l = k + 2
+13 let m = l + 2
+14 let n = m + 2
+15 let o = n + 2
+16 let p = o + 2
+17 let q = p + 2
+18 let r = q + 2
+19 let s = r + 2
+20 let t = s + 2
+21 let u = t + 2
+22 let v = u + 2
+23 let w = v + 2
+24 let x = w + 2
+25 let y = x + 2
+26 let z = y + 2
+27 print z
+28 end

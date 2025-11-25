@@ -285,9 +285,15 @@ class SMLGenerator:
         self.consts = {}      # value -> addr
         self.labels = {}      # label -> addr
         self.temps = []       # temp addrs
+        self.const_values = {}  # var -> known constant value
+        self.var_last_use = {}  # var -> último statement que usa
+        self.var_usage = {}     # var -> contador de usos
 
     def generate(self) -> List[str]:
         """Gera código SML otimizado."""
+        # Análise de dataflow para otimizações
+        self._analyze_dataflow()
+
         # Primeira passagem: código
         for stmt in self.statements:
             self.labels[stmt['label']] = self.addr
@@ -300,6 +306,146 @@ class SMLGenerator:
         self._resolve_addresses()
 
         return self.code
+
+    def _analyze_dataflow(self):
+        """Análise de dataflow para constant propagation e dead code elimination."""
+        # Primeira passagem: detecta constantes e último uso
+        var_definitions = {}  # var -> idx do statement que define
+        var_reads = {}  # var -> lista de statements que leem
+
+        for idx, stmt in enumerate(self.statements):
+            tokens = stmt['tokens']
+            kw = tokens[0].value
+
+            # Atualiza último uso de variáveis lidas
+            if kw == 'print':
+                var = tokens[1].value
+                self.var_last_use[var] = idx
+                self.var_usage[var] = self.var_usage.get(var, 0) + 1
+                if var not in var_reads:
+                    var_reads[var] = []
+                var_reads[var].append(idx)
+
+            elif kw == 'input':
+                var = tokens[1].value
+                self.const_values[var] = None  # Input invalida constante
+                self.var_last_use[var] = idx
+                self.var_usage[var] = self.var_usage.get(var, 0) + 1
+                var_definitions[var] = idx
+
+            elif kw == 'let':
+                var = tokens[1].value
+                expr = tokens[3:]
+
+                # Marca variáveis usadas na expressão
+                for t in expr:
+                    if t.kind == 'VAR':
+                        self.var_last_use[t.value] = idx
+                        self.var_usage[t.value] = self.var_usage.get(t.value, 0) + 1
+                        if t.value not in var_reads:
+                            var_reads[t.value] = []
+                        var_reads[t.value].append(idx)
+
+                # Tenta propagar constante
+                const_val = self._try_eval_constant(expr)
+                if const_val is not None:
+                    self.const_values[var] = const_val
+                else:
+                    self.const_values[var] = None
+
+                var_definitions[var] = idx
+                self.var_usage[var] = self.var_usage.get(var, 0) + 1
+
+            elif kw == 'if':
+                # Marca variáveis usadas no if
+                for t in tokens[1:]:
+                    if t.kind == 'VAR':
+                        self.var_last_use[t.value] = idx
+                        self.var_usage[t.value] = self.var_usage.get(t.value, 0) + 1
+                        if t.value not in var_reads:
+                            var_reads[t.value] = []
+                        var_reads[t.value].append(idx)
+
+        # Segunda passagem: determina quais variáveis realmente precisam ser armazenadas
+        self.needs_storage = {}
+        for var in var_definitions.keys():
+            # Variável precisa de storage se:
+            # 1. Recebe input (não é constante conhecida)
+            # 2. É lida mais de uma vez
+            # 3. É lida em um statement não-consecutivo
+            # 4. Não tem valor constante conhecido
+
+            if var not in self.const_values or self.const_values[var] is None:
+                # Não é constante - precisa de storage
+                self.needs_storage[var] = True
+            elif var in var_reads:
+                reads = var_reads[var]
+                def_idx = var_definitions[var]
+
+                # Se tem mais de uma leitura, ou leitura não consecutiva, precisa storage
+                if len(reads) > 1 or (len(reads) == 1 and reads[0] != def_idx + 1):
+                    self.needs_storage[var] = True
+                else:
+                    self.needs_storage[var] = False
+            else:
+                # Nunca é lida - não precisa storage (dead code)
+                self.needs_storage[var] = False
+
+    def _try_eval_constant(self, tokens: List[Token]) -> Optional[int]:
+        """Tenta avaliar expressão como constante."""
+        # Unário: -x
+        if tokens[0].kind == 'MINUS':
+            if len(tokens) >= 2 and tokens[1].kind == 'NUM':
+                return -int(tokens[1].value)
+            elif len(tokens) >= 2 and tokens[1].kind == 'VAR':
+                var = tokens[1].value
+                if var in self.const_values and self.const_values[var] is not None:
+                    return -self.const_values[var]
+            return None
+
+        # Único operando
+        if len(tokens) == 1:
+            if tokens[0].kind == 'NUM':
+                return int(tokens[0].value)
+            elif tokens[0].kind == 'VAR':
+                var = tokens[0].value
+                if var in self.const_values:
+                    return self.const_values[var]
+            return None
+
+        # Binário: a op b
+        if len(tokens) == 3:
+            left, op, right = tokens[0], tokens[1], tokens[2]
+
+            # Obtém valores
+            left_val = None
+            if left.kind == 'NUM':
+                left_val = int(left.value)
+            elif left.kind == 'VAR' and left.value in self.const_values:
+                left_val = self.const_values[left.value]
+
+            right_val = None
+            if right.kind == 'NUM':
+                right_val = int(right.value)
+            elif right.kind == 'VAR' and right.value in self.const_values:
+                right_val = self.const_values[right.value]
+
+            if left_val is None or right_val is None:
+                return None
+
+            # Avalia
+            if op.value == '+':
+                return left_val + right_val
+            elif op.value == '-':
+                return left_val - right_val
+            elif op.value == '*':
+                return left_val * right_val
+            elif op.value == '/' and right_val != 0:
+                return left_val // right_val
+            elif op.value == '%' and right_val != 0:
+                return left_val % right_val
+
+        return None
 
     def _emit(self, op: int, operand: int, comment: str = ""):
         """Emite instrução SML."""
@@ -336,14 +482,28 @@ class SMLGenerator:
 
         elif kw == 'print':
             var = tokens[1].value
-            self._get_var(var)
-            self._emit(SML.WRITE, 99, f"write {var}")
+
+            # Se variável é constante, carrega constante e imprime direto do acumulador
+            if var in self.const_values and self.const_values[var] is not None:
+                const_val = self.const_values[var]
+                self._get_const(const_val)
+                self._emit(SML.LOAD, 99, f"load {const_val}")
+                # Usa um temporário para imprimir
+                temp = self._get_temp()
+                self._emit(SML.STORE, 99, f"store temp")
+                self._emit(SML.WRITE, 99, f"write temp")
+            else:
+                self._get_var(var)
+                self._emit(SML.WRITE, 99, f"write {var}")
 
         elif kw == 'let':
             var = tokens[1].value
-            self._get_var(var)
             self._gen_expr(tokens[3:])
-            self._emit(SML.STORE, 99, f"store {var}")
+
+            # Só gera STORE se a variável precisa de storage
+            if self.needs_storage.get(var, True):
+                self._get_var(var)
+                self._emit(SML.STORE, 99, f"store {var}")
 
         elif kw == 'goto':
             target = int(tokens[1].value)
@@ -357,46 +517,74 @@ class SMLGenerator:
 
     def _gen_expr(self, tokens: List[Token]):
         """Gera código para expressão (resultado no acumulador)."""
+        # Tenta avaliar como constante primeiro
+        const_val = self._try_eval_constant(tokens)
+        if const_val is not None:
+            # Expressão é constante - carrega diretamente
+            self._get_const(const_val)
+            self._emit(SML.LOAD, 99, f"load {const_val}")
+            return
+
         # Unário: -x
         if tokens[0].kind == 'MINUS':
             operand = tokens[1]
-            zero = self._get_const(0)
+            self._get_const(0)
             self._emit(SML.LOAD, 99, "load 0")
 
             if operand.kind == 'NUM':
-                addr = self._get_const(int(operand.value))
+                self._get_const(int(operand.value))
                 self._emit(SML.SUB, 99, f"sub {operand.value}")
             else:
-                addr = self._get_var(operand.value)
-                self._emit(SML.SUB, 99, f"sub {operand.value}")
+                # Tenta substituir por constante
+                if operand.value in self.const_values and self.const_values[operand.value] is not None:
+                    val = self.const_values[operand.value]
+                    self._get_const(val)
+                    self._emit(SML.SUB, 99, f"sub {val}")
+                else:
+                    self._get_var(operand.value)
+                    self._emit(SML.SUB, 99, f"sub {operand.value}")
             return
 
         # Único operando
         if len(tokens) == 1:
             t = tokens[0]
             if t.kind == 'NUM':
-                addr = self._get_const(int(t.value))
+                self._get_const(int(t.value))
                 self._emit(SML.LOAD, 99, f"load {t.value}")
             else:
-                addr = self._get_var(t.value)
-                self._emit(SML.LOAD, 99, f"load {t.value}")
+                # Tenta substituir por constante
+                if t.value in self.const_values and self.const_values[t.value] is not None:
+                    val = self.const_values[t.value]
+                    self._get_const(val)
+                    self._emit(SML.LOAD, 99, f"load {val}")
+                else:
+                    self._get_var(t.value)
+                    self._emit(SML.LOAD, 99, f"load {t.value}")
             return
 
         # Binário: a op b
         left, op, right = tokens[0], tokens[1], tokens[2]
 
-        # Carrega left
+        # Carrega left (tenta usar constante se possível)
         if left.kind == 'NUM':
-            self._emit(SML.LOAD, 99, f"load {left.value}")
             self._get_const(int(left.value))
-        else:
             self._emit(SML.LOAD, 99, f"load {left.value}")
+        elif left.value in self.const_values and self.const_values[left.value] is not None:
+            val = self.const_values[left.value]
+            self._get_const(val)
+            self._emit(SML.LOAD, 99, f"load {val}")
+        else:
             self._get_var(left.value)
+            self._emit(SML.LOAD, 99, f"load {left.value}")
 
-        # Opera com right
+        # Opera com right (tenta usar constante se possível)
         if right.kind == 'NUM':
             self._get_const(int(right.value))
             rval = right.value
+        elif right.value in self.const_values and self.const_values[right.value] is not None:
+            val = self.const_values[right.value]
+            self._get_const(val)
+            rval = str(val)
         else:
             self._get_var(right.value)
             rval = right.value
@@ -465,11 +653,17 @@ class SMLGenerator:
         """Aloca variáveis, constantes e temporários (OTIMIZADO)."""
         data_start = self.addr
 
-        # Variáveis
-        for var in sorted(self.vars.keys()):
-            self.vars[var] = data_start
-            self.code.append({'addr': data_start, 'word': 0, 'comment': f"var {var}", 'resolved': True})
-            data_start += 1
+        # Filtra variáveis que realmente precisam ser alocadas
+        # usando a análise de needs_storage
+        vars_to_allocate = {}
+        for var in self.vars.keys():
+            # Aloca apenas se precisa de storage ou não foi analisada
+            if self.needs_storage.get(var, True):
+                vars_to_allocate[var] = data_start
+                self.code.append({'addr': data_start, 'word': 0, 'comment': f"var {var}", 'resolved': True})
+                data_start += 1
+
+        self.vars = vars_to_allocate
 
         # Temporários (reutiliza slots)
         temp_addr = data_start
@@ -479,11 +673,17 @@ class SMLGenerator:
             temp_addr += 1
         data_start = temp_addr
 
-        # Constantes
-        for val in sorted(self.consts.keys()):
-            self.consts[val] = data_start
-            self.code.append({'addr': data_start, 'word': val, 'comment': f"const {val}", 'resolved': True})
-            data_start += 1
+        # Constantes (compartilha valores duplicados)
+        const_map = {}  # valor -> endereço
+        for val in sorted(set(self.consts.keys())):
+            if val not in const_map:
+                const_map[val] = data_start
+                self.code.append({'addr': data_start, 'word': val, 'comment': f"const {val}", 'resolved': True})
+                data_start += 1
+
+        # Atualiza todas as referências para o mesmo endereço
+        for val in self.consts.keys():
+            self.consts[val] = const_map[val]
 
         # Verificação de overflow
         if data_start > 99:

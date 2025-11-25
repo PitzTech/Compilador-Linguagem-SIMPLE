@@ -1,0 +1,32 @@
+1  let a = 0
+2  let b = a + 2
+3  let c = b + 2
+4  let d = c + 2
+5  let e = d + 2
+6  let f = e + 2
+7  print f
+8  let g = f + 2
+9  let h = g + 2
+10 let i = h + 2
+11 let j = i + 2
+12 let k = j + 2
+13 print k
+14 let l = k + 2
+15 let m = l + 2
+16 let n = m + 2
+17 let o = n + 2
+18 let p = o + 2
+19 print p
+20 let q = p + 2
+21 let r = q + 2
+22 let s = r + 2
+23 let t = s + 2
+24 let u = t + 2
+25 print u
+26 let v = u + 2
+27 let w = v + 2
+28 let x = w + 2
+29 let y = x + 2
+30 let z = y + 2
+31 print z
+32 end
