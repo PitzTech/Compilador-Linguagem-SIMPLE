@@ -492,8 +492,6 @@ class SMLGenerator:
 
     def _resolve_addresses(self):
         """Resolve placeholders (99) para endereços reais."""
-        temp_idx = 0
-
         for instr in self.code:
             if instr['resolved']:
                 continue
@@ -513,32 +511,46 @@ class SMLGenerator:
             # STORE: busca variável ou temporário
             elif opcode == SML.STORE:
                 if 'temp' in comment:
-                    addr = self.temps[temp_idx % len(self.temps)] if self.temps else 0
                     if 'left' in comment:
-                        temp_idx = 0
+                        addr = self.temps[0] if self.temps else 0
                     elif 'right' in comment:
-                        temp_idx = 1
+                        addr = self.temps[1] if len(self.temps) > 1 else self.temps[0] if self.temps else 0
+                    else:
+                        addr = self.temps[0] if self.temps else 0
                 else:
                     parts = comment.split()
                     if len(parts) >= 2:
                         var_name = parts[1]
                         addr = self.vars.get(var_name, 0)
 
-            # LOAD: busca variável ou constante
+            # LOAD: busca variável, constante ou temporário
             elif opcode == SML.LOAD:
-                parts = comment.split()
-                if len(parts) >= 2:
-                    name = parts[1]
-                    if name.lstrip('-').isdigit():
-                        val = int(name)
-                        addr = self.consts.get(val, 0)
+                if 'temp' in comment:
+                    if 'left' in comment:
+                        addr = self.temps[0] if self.temps else 0
+                    elif 'right' in comment:
+                        addr = self.temps[1] if len(self.temps) > 1 else self.temps[0] if self.temps else 0
                     else:
-                        addr = self.vars.get(name, 0)
+                        addr = self.temps[0] if self.temps else 0
+                else:
+                    parts = comment.split()
+                    if len(parts) >= 2:
+                        name = parts[1]
+                        if name.lstrip('-').isdigit():
+                            val = int(name)
+                            addr = self.consts.get(val, 0)
+                        else:
+                            addr = self.vars.get(name, 0)
 
             # Operações aritméticas: busca variável, constante ou temp
             elif opcode in (SML.ADD, SML.SUB, SML.MUL, SML.DIV, SML.MOD):
                 if 'temp' in comment:
-                    addr = self.temps[temp_idx % len(self.temps)] if self.temps else 0
+                    if 'left' in comment:
+                        addr = self.temps[0] if self.temps else 0
+                    elif 'right' in comment:
+                        addr = self.temps[1] if len(self.temps) > 1 else self.temps[0] if self.temps else 0
+                    else:
+                        addr = self.temps[0] if self.temps else 0
                 else:
                     parts = comment.split()
                     if len(parts) >= 2:
