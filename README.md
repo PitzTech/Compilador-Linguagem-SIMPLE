@@ -1,8 +1,5 @@
 # 🖥️ Compilador da Linguagem SIMPLE para SML
 
-[![Python 3](https://img.shields.io/badge/python-3.6+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
 **Compilador completo** que traduz programas escritos na linguagem **SIMPLE** para **Simpletron Machine Language (SML)**, uma linguagem de máquina para o Simpletron (máquina virtual educacional com acumulador e 100 palavras de memória).
 
 ## 📋 Autor
