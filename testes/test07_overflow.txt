@@ -1,0 +1,21 @@
+05 rem teste extremo de memoria com loops
+10 input a
+15 let i = 0
+20 if i == 50 goto 100
+25 let b = i * 2
+30 let c = b + a
+35 let d = c - i
+40 let e = d * i
+45 let f = e + b
+50 let g = f - c
+55 let h = g * d
+60 let j = h + e
+65 let k = j - f
+70 let l = k * g
+75 let m = l + h
+80 let n = m - j
+85 let o = n * k
+90 let i = i + 1
+95 goto 20
+100 print o
+105 end

@@ -501,42 +501,65 @@ class SMLGenerator:
             word = instr['word']
             opcode = word // 100
             comment = instr['comment']
+            addr = 0
 
-            # Identifica tipo de operando
-            if 'var ' in comment:
-                var_name = comment.split('var ')[-1]
-                addr = self.vars.get(var_name, 0)
-
-            elif 'const ' in comment or any(op in comment for op in ['load ', 'sub ', 'add ', 'mul', 'div', 'mod']):
-                # Extrai valor/nome
+            # READ/WRITE: busca variável
+            if opcode in (SML.READ, SML.WRITE):
                 parts = comment.split()
                 if len(parts) >= 2:
-                    name = parts[-1]
-                    if name.lstrip('-').isdigit():
-                        addr = self.consts.get(int(name), 0)
-                    elif name in self.vars:
-                        addr = self.vars[name]
-                    else:
-                        addr = 0
+                    var_name = parts[1]
+                    addr = self.vars.get(var_name, 0)
+
+            # STORE: busca variável ou temporário
+            elif opcode == SML.STORE:
+                if 'temp' in comment:
+                    addr = self.temps[temp_idx % len(self.temps)] if self.temps else 0
+                    if 'left' in comment:
+                        temp_idx = 0
+                    elif 'right' in comment:
+                        temp_idx = 1
                 else:
-                    addr = 0
+                    parts = comment.split()
+                    if len(parts) >= 2:
+                        var_name = parts[1]
+                        addr = self.vars.get(var_name, 0)
 
-            elif 'temp' in comment:
-                addr = self.temps[temp_idx % len(self.temps)] if self.temps else 0
-                if 'right' in comment:
-                    temp_idx += 1
-
-            elif 'goto' in comment:
+            # LOAD: busca variável ou constante
+            elif opcode == SML.LOAD:
                 parts = comment.split()
-                target_label = int(parts[-1]) if parts[-1].isdigit() else 0
-                addr = self.labels.get(target_label, 0)
+                if len(parts) >= 2:
+                    name = parts[1]
+                    if name.lstrip('-').isdigit():
+                        val = int(name)
+                        addr = self.consts.get(val, 0)
+                    else:
+                        addr = self.vars.get(name, 0)
 
-            elif 'skip' in comment:
-                # Já resolvido como valor absoluto
-                addr = word % 100
+            # Operações aritméticas: busca variável, constante ou temp
+            elif opcode in (SML.ADD, SML.SUB, SML.MUL, SML.DIV, SML.MOD):
+                if 'temp' in comment:
+                    addr = self.temps[temp_idx % len(self.temps)] if self.temps else 0
+                else:
+                    parts = comment.split()
+                    if len(parts) >= 2:
+                        name = parts[1]
+                        if name.lstrip('-').isdigit():
+                            val = int(name)
+                            addr = self.consts.get(val, 0)
+                        else:
+                            addr = self.vars.get(name, 0)
 
-            else:
-                addr = 0
+            # BRANCH: busca label
+            elif opcode in (SML.BRANCH, SML.BRANCHNEG, SML.BRANCHZERO):
+                if 'skip' in comment:
+                    addr = word % 100  # Já está resolvido
+                else:
+                    parts = comment.split()
+                    for part in parts:
+                        if part.isdigit():
+                            target_label = int(part)
+                            addr = self.labels.get(target_label, word % 100)
+                            break
 
             instr['word'] = opcode * 100 + addr
             instr['resolved'] = True

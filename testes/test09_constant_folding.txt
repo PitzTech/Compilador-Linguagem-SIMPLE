@@ -1,0 +1,15 @@
+05 rem teste de constant folding
+10 let a = 5
+15 let b = 10
+20 let c = 3
+25 let d = 5
+30 let e = 10
+35 let f = 3
+40 rem constantes devem ser compartilhadas
+45 print a
+50 print b
+55 print c
+60 print d
+65 print e
+70 print f
+75 end

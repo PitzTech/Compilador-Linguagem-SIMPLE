@@ -1,0 +1,10 @@
+05 rem teste com variaveis nao usadas
+10 input x
+20 let a = x + 1
+30 let b = x + 2
+40 let c = x + 3
+50 let d = x + 4
+60 let e = x + 5
+70 rem apenas x e a sao usados
+80 print a
+90 end

@@ -1,0 +1,36 @@
+05 rem teste de stress de memoria
+10 input a
+15 input b
+20 input c
+25 input d
+30 input e
+35 input f
+40 input g
+45 input h
+50 input i
+55 input j
+60 input k
+65 input l
+70 input m
+75 input n
+80 input o
+85 let r = a + b
+90 let s = c + d
+95 let t = e + f
+100 let u = g + h
+105 let v = i + j
+110 let w = k + l
+115 let x = m + n
+120 let y = o + r
+125 let z = s + t
+130 if z > 100 goto 150
+135 let z = z * 2
+140 goto 160
+150 let z = z / 2
+160 print z
+165 print y
+170 print x
+175 print w
+180 print v
+185 print u
+190 end
