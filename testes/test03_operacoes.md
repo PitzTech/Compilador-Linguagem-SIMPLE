@@ -1,0 +1,20 @@
+# Teste 03: Todas as Operações Aritméticas
+
+**Descrição:** Testa todas as operações: +, -, *, /, %
+
+**Resultado Esperado:** Compilação bem-sucedida.
+
+```simple
+10 input x
+20 let a = x + 5
+30 let b = x - 3
+40 let c = x * 2
+50 let d = x / 2
+60 let e = x % 3
+70 print a
+80 print b
+90 print c
+95 print d
+97 print e
+99 end
+```

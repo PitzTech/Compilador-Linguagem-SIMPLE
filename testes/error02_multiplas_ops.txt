@@ -1,0 +1,4 @@
+10 input x
+20 let y = x + 2 * 3
+30 print y
+40 end

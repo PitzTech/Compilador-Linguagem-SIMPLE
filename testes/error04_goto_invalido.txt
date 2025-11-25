@@ -1,0 +1,4 @@
+10 input x
+20 if x > 0 goto 99
+30 print x
+40 end

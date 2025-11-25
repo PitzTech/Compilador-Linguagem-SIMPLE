@@ -1,0 +1,4 @@
+10 input x
+20 let y = x + 1
+20 print y
+30 end

@@ -1,0 +1,4 @@
+10 rem comentario OK
+20 INPUT x
+30 PRINT x
+40 END
