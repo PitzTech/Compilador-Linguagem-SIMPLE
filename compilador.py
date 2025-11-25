@@ -701,12 +701,15 @@ class SMLGenerator:
             comment = instr['comment']
             addr = 0
 
-            # READ/WRITE: busca variável
+            # READ/WRITE: busca variável ou temporário
             if opcode in (SML.READ, SML.WRITE):
                 parts = comment.split()
                 if len(parts) >= 2:
                     var_name = parts[1]
-                    addr = self.vars.get(var_name, 0)
+                    if var_name == 'temp':
+                        addr = self.temps[0] if self.temps else 0
+                    else:
+                        addr = self.vars.get(var_name, 0)
 
             # STORE: busca variável ou temporário
             elif opcode == SML.STORE:
