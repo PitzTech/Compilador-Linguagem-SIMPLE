@@ -313,6 +313,23 @@ class SMLGenerator:
         var_definitions = {}  # var -> idx do statement que define
         var_reads = {}  # var -> lista de statements que leem
 
+        # Detecta loops (backward jumps) e marca statements dentro de loops
+        in_loop = set()
+        label_to_idx = {stmt['label']: idx for idx, stmt in enumerate(self.statements)}
+
+        for idx, stmt in enumerate(self.statements):
+            tokens = stmt['tokens']
+            # Procura por gotos que pulam para trás (loops)
+            for i, t in enumerate(tokens):
+                if t.value == 'goto' and i+1 < len(tokens):
+                    target_label = int(tokens[i+1].value)
+                    if target_label in label_to_idx:
+                        target_idx = label_to_idx[target_label]
+                        # Se goto pula para trás, marca todo o range como loop
+                        if target_idx <= idx:
+                            for loop_idx in range(target_idx, idx + 1):
+                                in_loop.add(loop_idx)
+
         for idx, stmt in enumerate(self.statements):
             tokens = stmt['tokens']
             kw = tokens[0].value
@@ -338,20 +355,27 @@ class SMLGenerator:
                 expr = tokens[3:]
 
                 # Marca variáveis usadas na expressão
+                uses_self = False
                 for t in expr:
                     if t.kind == 'VAR':
+                        if t.value == var:
+                            uses_self = True
                         self.var_last_use[t.value] = idx
                         self.var_usage[t.value] = self.var_usage.get(t.value, 0) + 1
                         if t.value not in var_reads:
                             var_reads[t.value] = []
                         var_reads[t.value].append(idx)
 
-                # Tenta propagar constante
-                const_val = self._try_eval_constant(expr)
-                if const_val is not None:
-                    self.const_values[var] = const_val
-                else:
+                # Tenta propagar constante (mas NÃO se a variável usa ela mesma, foi redefinida, ou está em loop)
+                if uses_self or var in var_definitions or idx in in_loop:
+                    # Variável se automodifica, é redefinida, ou está em loop - invalida constante
                     self.const_values[var] = None
+                else:
+                    const_val = self._try_eval_constant(expr)
+                    if const_val is not None:
+                        self.const_values[var] = const_val
+                    else:
+                        self.const_values[var] = None
 
                 var_definitions[var] = idx
                 self.var_usage[var] = self.var_usage.get(var, 0) + 1

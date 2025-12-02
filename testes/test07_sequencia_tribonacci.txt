@@ -1,0 +1,20 @@
+01 rem sequencia de tribonacci
+02 rem input -5 = -1
+03 rem input  6 =  0 1 1 2 4 7 13
+10 input n
+15 if n < 0 goto 75
+20 let a = 0
+25 let b = 1
+30 let c = 1
+35 print a
+40 if n < 1 goto 85
+45 let x = a + b
+50 let x = x + c
+55 let a = b
+60 let b = c
+65 let c = x
+70 let n = n - 1
+75 goto 35
+80 let a = -1
+82 print a
+85 end
